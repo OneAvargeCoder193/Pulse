@@ -1,0 +1,8 @@
+bin
+.zig-cache
+LLVM
+zig-out
+zig-pkg
+
+# build systems
+Makefile
