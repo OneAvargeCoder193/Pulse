@@ -83,6 +83,11 @@ pub const Value = struct {
             );
         } else if(v.type.data == .null and typ.isPointer()) {
             return .makeNull(typ);
+        } else if(v.type.data == .ptr and typ.data == .ptr) {
+            return .makeValue(
+                v.value(),
+                typ,
+            );
         } else if(v.type.isNumeric() and typ.isNumeric()) {
             return castNumeric(builder, v, typ);
         }
@@ -375,6 +380,15 @@ pub const Value = struct {
                     };
                     return .makeValue(
                         c.LLVMBuildGEP2(builder, childType.toLLVM(), v.value(), &indices, indices.len, ""),
+                        memberType,
+                    );
+                }
+                @panic("not a member");
+            },
+            .ptr => {
+                if(std.mem.eql(u8, field, "*")) {
+                    return .makeValue(
+                        c.LLVMBuildLoad2(builder, memberType.toLLVM(), v.value(), ""),
                         memberType,
                     );
                 }

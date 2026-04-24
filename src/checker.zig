@@ -176,6 +176,40 @@ pub const TypeChecker = struct {
                 break :blk .makeType(.makeType(.{ .slice = child.success.value.typ }));
             },
 
+            .array => |a| {
+                const typ = self.inferType(a.type);
+                if(typ == .failure) return typ;
+
+                if(a.children.len != typ.success.value.typ.data.array.len) {
+                    return .{.failure = .{
+                        .kind = .{ .paramLenMismatch = .{.expected = typ.success.value.typ.data.array.len, .found = a.children.len} },
+                        .span = node.span,
+                    }};
+                }
+
+                const childType = typ.success.value.typ.data.array.child;
+                for(a.children, 0..) |child, i| {
+                    const res = self.check(child, childType);
+                    if(res == .failure) return res;
+                    node.inner.array.children[i] = self.makeCast(child, child.typ.typ, childType);
+                }
+
+                break :blk .makeRuntime(typ.success.value.typ);
+            },
+            .cast => |ca| {
+                const typ = self.inferType(ca.type);
+                if(typ == .failure) return typ;
+                const val = self.inferExpr(ca.val);
+                if(val == .failure) return val;
+                if(!Type.canCoerce(val.success.typ, typ.success.value.typ)) {
+                    return .{.failure = .{
+                        .kind = .cannotCast,
+                        .span = node.span,
+                    }};
+                }
+                break :blk .makeRuntime(typ.success.value.typ);
+            },
+
             .variable => |name| {
                 break :blk self.ctx.get(name) orelse return .{
                     .failure = .{

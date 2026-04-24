@@ -74,6 +74,17 @@ pub const Parser = struct {
         return null;
     }
 
+    fn matchAny(self: *Parser, typs: []const TokenType) ?ParseError {
+        if(std.mem.countScalar(TokenType, typs, self.current.typ) == 0) {
+            return .{
+                .kind = .{.unexpectedToken = typs},
+                .span = self.current.span,
+            };
+        }
+        _ = self.advance();
+        return null;
+    }
+
     fn makeNode(self: *Parser, data: NodeData, span: Span) *Node {
         const node = self.allocator.create(Node) catch unreachable;
         node.* = Node{
@@ -305,15 +316,41 @@ pub const Parser = struct {
             const rhs_result = self.parseExpr(.call);
             if(rhs_result == .failure) return rhs_result;
 
-            return .{ .success = self.makeNode(.{
-                .arrayType = .{
-                    .child = rhs_result.success,
-                    .len = len,
-                },
-            }, .{
-                .start = op.span.start,
-                .end = rhs_result.success.span.end
-            }) };
+            const arrayType = self.makeNode(.{
+                    .arrayType = .{
+                        .child = rhs_result.success,
+                        .len = len,
+                    },
+                }, .{
+                    .start = op.span.start,
+                    .end = rhs_result.success.span.end
+                });
+
+            if(self.current.typ == .l_brace) {
+                _ = self.advance();
+                var children: std.ArrayList(*Node) = .empty;
+                while(true) {
+                    const val = self.parseExpr(.none);
+                    if(val == .failure) return val;
+                    children.append(self.allocator, val.success) catch unreachable;
+
+                    if(self.current.typ == .r_brace) break;
+
+                    if(self.match(.comma)) |e| return .{.failure = e};
+                }
+
+                if(self.match(.r_brace)) |e| return .{.failure = e};
+
+                return .{ .success = self.makeNode(.{ .array = .{
+                    .type = arrayType,
+                    .children = children.toOwnedSlice(self.allocator) catch unreachable,
+                }}, .{
+                    .start = op.span.start,
+                    .end = self.current.span.start,
+                }) };
+            }
+
+            return .{ .success = arrayType };
         }
     }
 
@@ -442,22 +479,22 @@ pub const Parser = struct {
         }
 
         if (!is_lambda) {
-            if (params.items.len != 0) {
-                self.idx = start_idx;
-                self.current = self.tokens.items[@intCast(self.idx)];
-
-                const exprResult = self.parseExpr(.none);
-                if (exprResult == .failure) return exprResult;
-
-                if(self.match(.r_paren)) |e| return .{.failure = e};
-
-                return exprResult;
+            if (params.items.len == 0) {
+                return .{ .failure = ParseError{
+                    .kind = .{.unexpectedToken = &.{.identifier}},
+                    .span = self.current.span,
+                }};
             }
 
-            return .{ .failure = ParseError{
-                .kind = .{.unexpectedToken = &.{.identifier}},
-                .span = self.current.span,
-            }};
+            self.idx = start_idx;
+            self.current = self.tokens.items[@intCast(self.idx)];
+
+            const exprResult = self.parseExpr(.none);
+            if (exprResult == .failure) return exprResult;
+
+            if(self.match(.r_paren)) |e| return .{.failure = e};
+
+            return exprResult;
         }
 
         var body_result: ParserResult = undefined;
@@ -617,7 +654,7 @@ pub const Parser = struct {
 
     fn parseMember(self: *Parser, expr: *Node, _: Token) ParserResult {
         const tok = self.current;
-        if(self.match(.identifier)) |e| return .{.failure = e};
+        if(self.matchAny(&.{.identifier, .star})) |e| return .{.failure = e};
 
         return .{
             .success = self.makeNode(.{

@@ -208,6 +208,16 @@ pub const CodeGenerator = struct {
 
             .intType, .uintType, .floatType, .doubleType, .boolType, .voidType => return .makeType(node.typ.value.typ),
 
+            .array => |a| {
+                const typ = a.type.typ.value.typ;
+                var val = c.LLVMConstNull(typ.toLLVM());
+                for(0..typ.data.array.len) |i| {
+                    const expr = self.visitValue(a.children[i]);
+                    val = c.LLVMBuildInsertValue(self.builder, val, expr.value(), @intCast(i), "");
+                }
+                return .makeValue(val, typ);
+            },
+
             .cast => |ca| {
                 const value = self.visitValue(ca.val);
                 return Value.cast(self.builder, value, ca.type.typ.value.typ);

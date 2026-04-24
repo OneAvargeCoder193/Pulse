@@ -105,6 +105,7 @@ pub const TypeError = struct {
         storageMustBePtr: void,
         notIndexable: void,
         hasNoMembers: void,
+        cannotCast: void,
 
         pub fn createMessage(self: @This(), allocator: std.mem.Allocator) []u8 {
             switch(self) {
@@ -134,6 +135,7 @@ pub const TypeError = struct {
                 .storageMustBePtr => return allocator.dupe(u8, "Storage Expr Must Be Ptr") catch unreachable,
                 .notIndexable => return allocator.dupe(u8, "Type Not Indexable") catch unreachable,
                 .hasNoMembers => return allocator.dupe(u8, "Type Has No Members Or Is Not A Member") catch unreachable,
+                .cannotCast => return allocator.dupe(u8, "Cannot Cast") catch unreachable,
             }
         }
     },

@@ -96,6 +96,12 @@ pub const Type = struct {
                 }
                 return null;
             },
+            .ptr => {
+                if(std.mem.eql(u8, name, "*")) {
+                    return self.data.ptr;
+                }
+                return null;
+            },
             else => return null,
         }
     }
@@ -111,6 +117,7 @@ pub const Type = struct {
         if(self.isNumeric() and other.isNumeric()) return true;
         if(self.data == .null and other.isPointer()) return true;
         if(self.isPointer() and other.data == .null) return true;
+        if(self.data == .ptr and other.data == .ptr) return true;
         if(self.data == .slice and other.data == .manyPtr and self.data.slice.eql(other.data.manyPtr)) return true;
         return self.eql(other);
     }

@@ -15,17 +15,13 @@ func write(file: *u8, str: []u8) void {
 }
 
 func writeChar(file: *u8, char: u8) void {
-    var arr: [1]u8;
-    arr[0] = char;
+    var arr = [1]u8 {char};
     write(file, arr[:]);
     return;
 }
 
 func writeUint(file: *u8, int: u32) void {
     var data: [11]u8;
-    for(var i: u32 = 0; i < 11; i = i + 1) {
-        data[i] = 0;
-    }
     var i: u32 = 10;
     while(int != 0) {
         var digit: u8 = int - (int / 10) * 10;

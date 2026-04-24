@@ -32,6 +32,11 @@ pub const NodeData = union(enum) {
     ptrMany: *Node,
     ptrSlice: *Node,
 
+    array: struct {
+        type: *Node,
+        children: []*Node
+    },
+
     cast: struct { type: *Node, val: *Node },
 
     variable: []const u8,
@@ -134,6 +139,17 @@ pub const Node = struct {
             .ptrSlice => |p| {
                 std.debug.print("[]", .{});
                 p.print(0);
+            },
+            .array => |p| {
+                p.type.print(0);
+                std.debug.print(" {{", .{});
+                for(p.children, 0..) |child, i| {
+                    if(i != 0) {
+                        std.debug.print(", ", .{});
+                    }
+                    child.print(0);
+                }
+                std.debug.print("}}", .{});
             },
 
             .cast => |c| {
