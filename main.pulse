@@ -9,6 +9,17 @@ func WriteConsoleA(
 
 var stdout: *u8;
 
+func add(a: i32, b: i32) i32 {
+    var res: i32;
+    asm sideeffect (
+        "addl $1, $0\nmovl $2, $0"
+        : "=r"(res)
+        : "r"(a), "r"(b)
+        : "cc"
+    );
+    return res;
+}
+
 func write(file: *u8, str: []u8) void {
     WriteConsoleA(file, str.ptr, str.len, null, null);
 }
@@ -89,7 +100,7 @@ func main() i32 {
 
     writeChar(stdout, 65);
     writeChar(stdout, 10);
-    writeUint(stdout, 69420);
+    writeUint(stdout, add(69000, 420));
     writeChar(stdout, 10);
     writeInt(stdout, -420);
 

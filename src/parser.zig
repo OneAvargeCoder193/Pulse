@@ -152,6 +152,8 @@ pub const Parser = struct {
             // Logical OR
             .or_or => .{ .prefix = null, .infix = &parseBinary, .precedence = .@"or" },
 
+            .kw_asm => .{ .prefix = &parseAsm, .infix = null, .precedence = .call },
+
             // Assignment operators
             .eq, .plus_eq, .minus_eq, .star_eq, .slash_eq, .percent_eq,
             .and_equal, .or_equal, .xor_equal, .shift_left_equal, .shift_right_equal =>
@@ -947,6 +949,105 @@ pub const Parser = struct {
             .iterate = incNode,
             .body = body.success,
         }}, .{
+            .start = start.span.start,
+            .end = self.current.span.start,
+        }) };
+    }
+
+    fn parseAsm(self: *Parser) ParserResult {
+        const start = self.current;
+        _ = self.advance();
+
+        var sideeffects: bool = false;
+        var alignstack: bool = false;
+        while(self.current.typ != .l_paren) {
+            if(self.current.typ == .kw_alignstack) {
+                alignstack = true;
+            } else if(self.current.typ == .kw_sideeffects) {
+                sideeffects = true;
+            }
+            _ = self.advance();
+        }
+
+        if(self.match(.l_paren)) |e| return .{.failure = e};
+
+        const asmSrc = self.current.lexeme[1..self.current.lexeme.len - 1];
+        if(self.match(.string_literal)) |e| return .{.failure = e};
+
+        if(self.match(.colon)) |e| return .{.failure = e};
+
+        var outputStrs: std.ArrayList([]const u8) = .empty;
+        var outputs: std.ArrayList(*Node) = .empty;
+
+        while(self.current.typ != .colon) {
+            outputStrs.append(self.allocator, self.current.lexeme[1..self.current.lexeme.len - 1]) catch unreachable;
+            if(self.match(.string_literal)) |e| return .{.failure = e};
+            
+            if(self.match(.l_paren)) |e| return .{.failure = e};
+
+            const output = self.parseExpr(.none);
+            if(output == .failure) return output;
+            outputs.append(self.allocator, output.success) catch unreachable;
+
+            if(self.match(.r_paren)) |e| return .{.failure = e};
+
+            if(self.current.typ != .comma) {
+                break;
+            }
+            _ = self.advance();
+        }
+
+        if(self.match(.colon)) |e| return .{.failure = e};
+        
+        var inputStrs: std.ArrayList([]const u8) = .empty;
+        var inputs: std.ArrayList(*Node) = .empty;
+
+        while(self.current.typ != .colon) {
+            inputStrs.append(self.allocator, self.current.lexeme[1..self.current.lexeme.len - 1]) catch unreachable;
+            if(self.match(.string_literal)) |e| return .{.failure = e};
+            
+            if(self.match(.l_paren)) |e| return .{.failure = e};
+
+            const input = self.parseExpr(.none);
+            if(input == .failure) return input;
+            inputs.append(self.allocator, input.success) catch unreachable;
+
+            if(self.match(.r_paren)) |e| return .{.failure = e};
+
+            if(self.current.typ != .comma) {
+                break;
+            }
+            _ = self.advance();
+        }
+        
+        if(self.match(.colon)) |e| return .{.failure = e};
+
+        var clobbers: std.ArrayList([]const u8) = .empty;
+
+        while(self.current.typ != .l_paren) {
+            clobbers.append(self.allocator, self.current.lexeme[1..self.current.lexeme.len - 1]) catch unreachable;
+            if(self.match(.string_literal)) |e| return .{.failure = e};
+
+            if(self.current.typ != .comma) {
+                break;
+            }
+            _ = self.advance();
+        }
+
+        if(self.match(.r_paren)) |e| return .{.failure = e};
+
+        return .{ .success = self.makeNode(.{
+            .@"asm" = .{
+                .asmstring = asmSrc,
+                .outputStrs = outputStrs.toOwnedSlice(self.allocator) catch unreachable,
+                .outputs = outputs.toOwnedSlice(self.allocator) catch unreachable,
+                .inputStrs = inputStrs.toOwnedSlice(self.allocator) catch unreachable,
+                .inputs = inputs.toOwnedSlice(self.allocator) catch unreachable,
+                .clobbers = clobbers.toOwnedSlice(self.allocator) catch unreachable,
+                .sideEffects = sideeffects,
+                .alignStack = alignstack,
+            },
+        }, .{
             .start = start.span.start,
             .end = self.current.span.start,
         }) };

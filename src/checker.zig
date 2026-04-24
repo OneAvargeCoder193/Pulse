@@ -483,6 +483,17 @@ pub const TypeChecker = struct {
                 self.ctx.set(f.name, poly);
                 break :blk poly;
             },
+            .@"asm" => |a| {
+                for(a.outputs) |out| {
+                    const res = self.inferExpr(out);
+                    if(res == .failure) return res;
+                }
+                for(a.inputs) |in| {
+                    const res = self.inferExpr(in);
+                    if(res == .failure) return res;
+                }
+                break :blk .makeNone();
+            },
             .@"if" => |i| {
                 for(i.cond, i.thenBranch, 0..) |cond, then, j| {
                     const parent = self.ctx;

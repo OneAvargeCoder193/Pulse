@@ -402,6 +402,65 @@ pub const CodeGenerator = struct {
                 self.ctx.set(f.name, poly);
                 return null;
             },
+            .@"asm" => |a| {
+                const unescapedAsmstring = unescape(std.heap.smp_allocator, a.asmstring) catch unreachable;
+                defer std.heap.smp_allocator.free(unescapedAsmstring);
+                const cAsmstring = std.heap.smp_allocator.dupeZ(u8, unescapedAsmstring) catch unreachable;
+                defer std.heap.smp_allocator.free(cAsmstring);
+
+                var constraints: std.ArrayList(u8) = .empty;
+                var i: usize = 0;
+                for(a.outputStrs) |out| {
+                    if(i != 0) constraints.appendSlice(self.allocator, ",") catch unreachable;
+                    constraints.appendSlice(self.allocator, out) catch unreachable;
+                    i += 1;
+                }
+                for(a.inputStrs) |in| {
+                    if(i != 0) constraints.appendSlice(self.allocator, ",") catch unreachable;
+                    constraints.appendSlice(self.allocator, in) catch unreachable;
+                    i += 1;
+                }
+                for(a.clobbers) |clobber| {
+                    if(i != 0) constraints.appendSlice(self.allocator, ",") catch unreachable;
+                    constraints.print(self.allocator, "~{{{s}}}", .{clobber}) catch unreachable;
+                    i += 1;
+                }
+
+                const unescapedContraints = unescape(std.heap.smp_allocator, constraints.items) catch unreachable;
+                defer std.heap.smp_allocator.free(unescapedContraints);
+                const cConstraints = std.heap.smp_allocator.dupeZ(u8, unescapedContraints) catch unreachable;
+                defer std.heap.smp_allocator.free(cConstraints);
+
+                const funcArgs = self.allocator.alloc(c.LLVMTypeRef, a.inputs.len) catch unreachable;
+                const ins = self.allocator.alloc(c.LLVMValueRef, a.inputs.len) catch unreachable;
+                for(a.inputs, 0..) |in, idx| {
+                    const val = self.visitValue(in);
+                    ins[idx] = val.value();
+                    funcArgs[idx] = val.type.toLLVM();
+                }
+                const funcOutputs = self.allocator.alloc(c.LLVMTypeRef, a.outputs.len) catch unreachable;
+                const outs = self.allocator.alloc(Value, a.outputs.len) catch unreachable;
+                for(a.outputs, 0..) |out, idx| {
+                    outs[idx] = self.visitStorage(out);
+                    funcOutputs[idx] = outs[idx].type.data.ptr.toLLVM();
+                }
+
+                const retType = c.LLVMStructType(funcOutputs.ptr, @intCast(funcOutputs.len), 0);
+                const funcTy = c.LLVMFunctionType(retType, funcArgs.ptr, @intCast(funcArgs.len), 0);
+                const inlineAsm = c.LLVMConstInlineAsm(
+                    funcTy,
+                    cAsmstring.ptr,
+                    cConstraints.ptr,
+                    if(a.sideEffects) 1 else 0,
+                    if(a.alignStack) 1 else 0,
+                );
+                const res = c.LLVMBuildCall2(self.builder, funcTy, inlineAsm, ins.ptr, @intCast(ins.len), "");
+                for(0..outs.len) |idx| {
+                    const val = c.LLVMBuildExtractValue(self.builder, res, @intCast(idx), "");
+                    _ = c.LLVMBuildStore(self.builder, val, outs[idx].value());
+                }
+                return null;
+            },
             .@"if" => |i| {
                 const condBBs = std.heap.smp_allocator.alloc(c.LLVMBasicBlockRef, i.cond.len) catch unreachable;
                 defer std.heap.smp_allocator.free(condBBs);
@@ -424,7 +483,7 @@ pub const CodeGenerator = struct {
                     defer child.deinit();
                     self.ctx = child;
                     defer self.ctx = parent;
-                    
+
                     c.LLVMPositionBuilderAtEnd(self.builder, condBBs[j]);
                     const condition = self.visitValue(cond);
                     const nextBB = if(j + 1 < condBBs.len) condBBs[j + 1] else if(elseBB) |e| e else endBB;

@@ -57,6 +57,7 @@ pub const NodeData = union(enum) {
     @"while": struct { cond: *Node, body: *Node },
     @"for": struct { initialize: ?*Node, condition: ?*Node, iterate: ?*Node, body: *Node },
     funcDecl: struct { name: []const u8, generics: [][]const u8, params: []Param, returnType: *Node, body: ?*Node, varArgs: ?[]const u8, varArgConv: VarArgConv },
+    @"asm": struct { asmstring: []const u8, outputStrs: [][]const u8, outputs: []*Node, inputStrs: [][]const u8, inputs: []*Node, clobbers: [][]const u8, sideEffects: bool, alignStack: bool },
     classDecl: struct { name: []const u8, generics: [][]const u8, body: *Node },
 };
 
@@ -308,6 +309,16 @@ pub const Node = struct {
                 if(f.body) |b| {
                     b.print(indent);
                 }
+            },
+            .@"asm" => |a| {
+                std.debug.print("{s}asm ", .{pad});
+                if(a.sideEffects) {
+                    std.debug.print("sideeffects ", .{});
+                }
+                if(a.alignStack) {
+                    std.debug.print("alignstack ", .{});
+                }
+                std.debug.print("(\"{s}\", \"constraints\")", .{a.asmstring});
             },
 
             .classDecl => |c| {

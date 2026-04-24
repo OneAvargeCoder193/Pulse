@@ -27,6 +27,9 @@ pub const TokenType = enum {
     kw_null,
     kw_true,
     kw_false,
+    kw_asm,
+    kw_sideeffects,
+    kw_alignstack,
 
     type_void,
     type_bool,
@@ -82,6 +85,9 @@ pub const keywords = [_][]const u8 {
     "null",
     "true",
     "false",
+    "asm",
+    "sideeffects",
+    "alignstack",
 };
 
 pub const hardcodedTypes = [_][]const u8 {
