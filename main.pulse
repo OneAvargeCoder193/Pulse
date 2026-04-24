@@ -90,6 +90,7 @@ func main() i32 {
     writeChar(stdout, 65);
     writeChar(stdout, 10);
     writeUint(stdout, 69420);
+    writeChar(stdout, 10);
     writeInt(stdout, -420);
 
     return 0;
