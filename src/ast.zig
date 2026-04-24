@@ -53,7 +53,7 @@ pub const NodeData = union(enum) {
     assign: struct { target: *Node, value: *Node, op: TokenType },
     applyGeneric: struct { value: *Node, generics: []*Node },
     @"return": ?*Node,
-    @"if": struct { cond: *Node, thenBranch: *Node, elseBranch: ?*Node },
+    @"if": struct { cond: []*Node, thenBranch: []*Node, elseBranch: ?*Node },
     @"while": struct { cond: *Node, body: *Node },
     @"for": struct { initialize: ?*Node, condition: ?*Node, iterate: ?*Node, body: *Node },
     funcDecl: struct { name: []const u8, generics: [][]const u8, params: []Param, returnType: *Node, body: ?*Node, varArgs: ?[]const u8, varArgConv: VarArgConv },
@@ -260,13 +260,14 @@ pub const Node = struct {
             },
 
             .@"if" => |i| {
-                std.debug.print("{s}if (", .{pad});
-                i.cond.print(0);
-                std.debug.print(") ", .{});
-                i.thenBranch.print(indent);
-
+                for(i.cond, i.thenBranch, 0..) |cond, then, j| {
+                    std.debug.print("{s}{s}if (", .{pad, if(j == 0) "" else " else "});
+                    cond.print(0);
+                    std.debug.print(") ", .{});
+                    then.print(indent);
+                }
                 if(i.elseBranch) |elseBranch| {
-                    std.debug.print("{s}else ", .{pad});
+                    std.debug.print(" else ", .{});
                     elseBranch.print(indent);
                 }
             },

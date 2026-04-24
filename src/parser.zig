@@ -682,7 +682,7 @@ pub const Parser = struct {
                 return result;
             },
 
-            // .kw_if => return self.parseIf(),
+            .kw_if => return self.parseIf(),
             .kw_while => return self.parseWhile(),
             .kw_for => return self.parseFor(),
 
@@ -846,6 +846,46 @@ pub const Parser = struct {
         }}, .{
             .start = tok.span.start,
             .end = if(body) |b| b.span.end else returnType.span.end,
+        }) };
+    }
+
+    fn parseIf(self: *Parser) ParserResult {
+        const start = self.current;
+
+        var conds: std.ArrayList(*Node) = .empty;
+        var bodies: std.ArrayList(*Node) = .empty;
+        var elseBody: ?*Node = null;
+
+        var result: ?ParseError = null;
+        while(result == null) {
+            if(self.current.typ == .kw_if) {
+                _ = self.advance();
+
+                if(self.match(.l_paren)) |e| return .{.failure = e};
+                const condition = self.parseExpr(.none);
+                if(condition == .failure) return condition;
+                conds.append(self.allocator, condition.success) catch unreachable;
+                if(self.match(.r_paren)) |e| return .{.failure = e};
+
+                const body = self.parseBody();
+                if(body == .failure) return body;
+                bodies.append(self.allocator, body.success) catch unreachable;
+            } else {
+                const body = self.parseBody();
+                if(body == .failure) return body;
+                elseBody = body.success;
+                break;
+            }
+            result = self.match(.kw_else);
+        }
+
+        return .{ .success = self.makeNode(.{ .@"if" = .{
+            .cond = conds.toOwnedSlice(self.allocator) catch unreachable,
+            .thenBranch = bodies.toOwnedSlice(self.allocator) catch unreachable,
+            .elseBranch = elseBody,
+        }}, .{
+            .start = start.span.start,
+            .end = self.current.span.start,
         }) };
     }
 

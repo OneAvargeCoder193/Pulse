@@ -389,12 +389,63 @@ pub const CodeGenerator = struct {
                         self.currentFunc = func.value();
                         _ = self.visit(b);
                         self.currentFunc = oldFunc;
+
+                        const lastBB = c.LLVMGetInsertBlock(self.builder);
+                        if(c.LLVMGetBasicBlockTerminator(lastBB) == null) {
+                            _ = c.LLVMBuildRetVoid(self.builder);
+                        }
                     }
 
                     break :elseBlk func;
                 };
 
                 self.ctx.set(f.name, poly);
+                return null;
+            },
+            .@"if" => |i| {
+                const condBBs = std.heap.smp_allocator.alloc(c.LLVMBasicBlockRef, i.cond.len) catch unreachable;
+                defer std.heap.smp_allocator.free(condBBs);
+                const bodyBBs = std.heap.smp_allocator.alloc(c.LLVMBasicBlockRef, i.thenBranch.len) catch unreachable;
+                defer std.heap.smp_allocator.free(bodyBBs);
+                var elseBB: c.LLVMBasicBlockRef = null;
+                var endBB: c.LLVMBasicBlockRef = null;
+
+                for(0..i.cond.len) |j| {
+                    condBBs[j] = c.LLVMAppendBasicBlock(self.currentFunc, "");
+                    bodyBBs[j] = c.LLVMAppendBasicBlock(self.currentFunc, "");
+                }
+                if(i.elseBranch) |_| elseBB = c.LLVMAppendBasicBlock(self.currentFunc, "");
+                endBB = c.LLVMAppendBasicBlock(self.currentFunc, "");
+                _ = c.LLVMBuildBr(self.builder, condBBs[0]);
+
+                for(i.cond, i.thenBranch, 0..) |cond, then, j| {
+                    const parent = self.ctx;
+                    const child = Context.init(parent);
+                    defer child.deinit();
+                    self.ctx = child;
+                    defer self.ctx = parent;
+                    
+                    c.LLVMPositionBuilderAtEnd(self.builder, condBBs[j]);
+                    const condition = self.visitValue(cond);
+                    const nextBB = if(j + 1 < condBBs.len) condBBs[j + 1] else if(elseBB) |e| e else endBB;
+                    _ = c.LLVMBuildCondBr(self.builder, condition.value(), bodyBBs[j], nextBB);
+
+                    c.LLVMPositionBuilderAtEnd(self.builder, bodyBBs[j]);
+                    _ = self.visit(then);
+                    if(c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
+                        _ = c.LLVMBuildBr(self.builder, endBB);
+                    }
+                }
+                if(i.elseBranch) |elseBranch| {
+                    c.LLVMPositionBuilderAtEnd(self.builder, elseBB);
+                    _ = self.visit(elseBranch);
+
+                    if(c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
+                        _ = c.LLVMBuildBr(self.builder, endBB);
+                    }
+                }
+                c.LLVMPositionBuilderAtEnd(self.builder, endBB);
+
                 return null;
             },
             .@"while" => |w| {

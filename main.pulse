@@ -11,17 +11,20 @@ var stdout: *u8;
 
 func write(file: *u8, str: []u8) void {
     WriteConsoleA(file, str.ptr, str.len, null, null);
-    return;
 }
 
 func writeChar(file: *u8, char: u8) void {
     var arr = [1]u8 {char};
     write(file, arr[:]);
-    return;
 }
 
 func writeUint(file: *u8, int: u32) void {
-    var data: [11]u8;
+    if(int == 0) {
+        writeChar(file, 48);
+        return;
+    }
+
+    var data: [10]u8;
     var i: u32 = 10;
     while(int != 0) {
         var digit: u8 = int - (int / 10) * 10;
@@ -29,24 +32,65 @@ func writeUint(file: *u8, int: u32) void {
         int = int / 10;
     }
     write(file, data[i:]);
-    return;
+}
+
+func writeInt(file: *u8, int: i32) void {
+    if(int < 0) {
+        writeChar(file, 45);
+        int = -int;
+    }
+    writeUint(file, int);
+}
+
+func sqrt(n: i32) i32 {
+    if(n < 0) {
+        return -1;
+    }
+    var low: i32 = 0;
+    var high: i32 = n;
+    while(low <= high) {
+        var mid: i32 = (low + high) / 2;
+        var sq = mid * mid;
+        if(sq == n) {
+            return mid;
+        } else if (sq < n) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return -1;
 }
 
 func main() i32 {
     stdout = GetStdHandle(-11);
 
-    for (var i: i32 = 0; i < 10; i = i + 1) {
-        write(stdout, "Hello, World (for)!\n");
-    }
     var i: i32 = 0;
     while (i < 10) {
-        write(stdout, "Hello, World (while)!\n");
+        write(stdout, "Hello, World (");
+        writeUint(stdout, i);
+        write(stdout, ")!\n");
         i = i + 1;
+    }
+
+    for(var a = 1; a < 15; a = a + 1) {
+        for(var b = 1; b < 15; b = b + 1) {
+            var hypot = sqrt(a * a + b * b);
+            if(hypot >= 0) {
+                writeUint(stdout, a);
+                write(stdout, "^2 + ");
+                writeUint(stdout, b);
+                write(stdout, "^2 = ");
+                writeUint(stdout, hypot);
+                write(stdout, "^2\n");
+            }
+        }
     }
 
     writeChar(stdout, 65);
     writeChar(stdout, 10);
     writeUint(stdout, 69420);
+    writeInt(stdout, -420);
 
     return 0;
 }

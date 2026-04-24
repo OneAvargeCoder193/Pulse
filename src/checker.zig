@@ -483,6 +483,29 @@ pub const TypeChecker = struct {
                 self.ctx.set(f.name, poly);
                 break :blk poly;
             },
+            .@"if" => |i| {
+                for(i.cond, i.thenBranch, 0..) |cond, then, j| {
+                    const parent = self.ctx;
+                    const child = Context.init(parent);
+                    defer child.deinit();
+                    self.ctx = child;
+                    defer self.ctx = parent;
+
+                    const condition = self.check(cond, .makeType(.bool));
+                    if(condition == .failure) return condition;
+
+                    node.inner.@"if".cond[j] = self.makeCast(cond, cond.typ.typ, .makeType(.bool));
+
+                    const body = self.inferStmt(then);
+                    if(body == .failure) return body;
+                }
+                if(i.elseBranch) |elseBranch| {
+                    const body = self.inferStmt(elseBranch);
+                    if(body == .failure) return body;
+                }
+
+                break :blk .makeNone();
+            },
             .@"while" => |w| {
                 const parent = self.ctx;
                 const child = Context.init(parent);
