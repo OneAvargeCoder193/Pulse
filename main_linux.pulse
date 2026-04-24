@@ -1,24 +1,24 @@
-func GetStdHandle(nStdHandle: u64) *u8;
-func WriteConsoleA(
-    hConsoleOutput: *u8,
-    lpBuffer: [*]u8,
-    nNumberOfCharsToWrite: u64,
-    lpNumberOfCharsWritten: *u64,
-    lpReserved: *u8,
-) bool;
+var stdout: i64 = 1;
 
-var stdout: *u8;
-
-func write(file: *u8, str: []u8) void {
-    WriteConsoleA(file, str.ptr, str.len, null, null);
+func write(file: i64, str: []u8) void {
+    var rax: i64 = 1;
+    var rdi: i64 = file;
+    var rsi: [*]u8 = str.ptr;
+    var rdx: i64 = str.len;
+    asm sideeffect (
+        "syscall"
+        :
+        : "{rax}"(rax), "{rdi}"(file), "{rsi}"(rsi), "{rdx}"(rdx)
+        : "rcx", "r11", "memory"
+    );
 }
 
-func writeChar(file: *u8, char: u8) void {
+func writeChar(file: i64, char: u8) void {
     var arr = [1]u8 {char};
     write(file, arr[:]);
 }
 
-func writeUint(file: *u8, int: u32) void {
+func writeUint(file: i64, int: u32) void {
     if(int == 0) {
         writeChar(file, 48);
         return;
@@ -34,7 +34,7 @@ func writeUint(file: *u8, int: u32) void {
     write(file, data[i:]);
 }
 
-func writeInt(file: *u8, int: i32) void {
+func writeInt(file: i64, int: i32) void {
     if(int < 0) {
         writeChar(file, 45);
         int = -int;
@@ -74,8 +74,6 @@ func add(a: i32, b: i32) i32 {
 }
 
 func main() i32 {
-    stdout = GetStdHandle(-11);
-
     var i: i32 = 0;
     while (i < 10) {
         write(stdout, "Hello, World (");
