@@ -1,10 +1,6 @@
 var stdout: i64 = 1;
 
 func write(file: i64, str: []u8) void {
-    var rax: i64 = 1;
-    var rdi: i64 = file;
-    var rsi: [*]u8 = str.ptr;
-    var rdx: i64 = str.len;
     asm sideeffect (
         "syscall"
         :
