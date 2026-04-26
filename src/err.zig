@@ -106,6 +106,7 @@ pub const TypeError = struct {
         notIndexable: void,
         hasNoMembers: void,
         cannotCast: void,
+        cannotAssignToConstant: void,
 
         pub fn createMessage(self: @This(), allocator: std.mem.Allocator) []u8 {
             switch(self) {
@@ -136,6 +137,7 @@ pub const TypeError = struct {
                 .notIndexable => return allocator.dupe(u8, "Type Not Indexable") catch unreachable,
                 .hasNoMembers => return allocator.dupe(u8, "Type Has No Members Or Is Not A Member") catch unreachable,
                 .cannotCast => return allocator.dupe(u8, "Cannot Cast") catch unreachable,
+                .cannotAssignToConstant => return allocator.dupe(u8, "Cannot Assign To Constant") catch unreachable,
             }
         }
     },

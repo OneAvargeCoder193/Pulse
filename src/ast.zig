@@ -101,9 +101,32 @@ pub const Node = struct {
             },
 
             .typeType => {
-                const str = self.typ.value.typ.toString(std.heap.smp_allocator);
-                defer std.heap.smp_allocator.free(str);
-                std.debug.print("{s}", .{str});
+                switch(self.typ.value) {
+                    .none, .runtime => {
+                        std.debug.print("{s}", .{@tagName(self.typ.value)});
+                    },
+                    .typ => {
+                        const str = self.typ.value.typ.toString(std.heap.smp_allocator);
+                        defer std.heap.smp_allocator.free(str);
+                        std.debug.print("{s}", .{str});
+                    },
+                    .constant => {
+                        switch(self.typ.value.constant) {
+                            .int => |i| {
+                                std.debug.print("{any}", .{i});
+                            },
+                            .float => |f| {
+                                std.debug.print("{any}", .{f});
+                            },
+                            .bool => |b| {
+                                std.debug.print("{any}", .{b});
+                            },
+                            .null => {
+                                std.debug.print("null", .{});
+                            },
+                        }
+                    },
+                }
             },
             .intType => |v| {
                 std.debug.print("i{d}", .{v});

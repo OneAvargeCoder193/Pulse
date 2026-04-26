@@ -1,24 +1,26 @@
-func GetStdHandle(nStdHandle: u64) *u8;
+func GetStdHandle(nStdHandle: u32) *u8;
 func WriteConsoleA(
     hConsoleOutput: *u8,
     lpBuffer: [*]u8,
-    nNumberOfCharsToWrite: u64,
-    lpNumberOfCharsWritten: *u64,
+    nNumberOfCharsToWrite: u32,
+    lpNumberOfCharsWritten: *u32,
     lpReserved: *u8,
 ) bool;
 
-var stdout: *u8;
+var handle = *u8;
 
-func write(file: *u8, str: []u8) void {
+var stdout: handle;
+
+func write(file: handle, str: []u8) void {
     WriteConsoleA(file, str.ptr, str.len, null, null);
 }
 
-func writeChar(file: *u8, char: u8) void {
+func writeChar(file: handle, char: u8) void {
     var arr = [1]u8 {char};
     write(file, arr[:]);
 }
 
-func writeUint(file: *u8, int: u32) void {
+func writeUint(file: handle, int: u32) void {
     if(int == 0) {
         writeChar(file, 48);
         return;
@@ -34,7 +36,7 @@ func writeUint(file: *u8, int: u32) void {
     write(file, data[i:]);
 }
 
-func writeInt(file: *u8, int: i32) void {
+func writeInt(file: handle, int: i32) void {
     if(int < 0) {
         writeChar(file, 45);
         int = -int;
@@ -84,8 +86,8 @@ func main() i32 {
         i = i + 1;
     }
 
-    for(var a = 1; a < 15; a = a + 1) {
-        for(var b = 1; b < 15; b = b + 1) {
+    for(var a: i32 = 1; a < 15; a = a + 1) {
+        for(var b: i32 = 1; b < 15; b = b + 1) {
             var hypot = sqrt(a * a + b * b);
             if(hypot >= 0) {
                 writeUint(stdout, a);

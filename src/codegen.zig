@@ -184,6 +184,9 @@ pub const CodeGenerator = struct {
     }
 
     pub fn visit(self: *CodeGenerator, node: *Node) ?Value {
+        if(node.typ.value == .constant) {
+            return .makeConst(node.typ.value.constant, node.typ.typ);
+        }
         switch(node.inner) {
             .body => |children| {
                 for(children) |child| {
@@ -191,10 +194,10 @@ pub const CodeGenerator = struct {
                 }
                 return null;
             },
-            .intLiteral => |i| return .makeValue(c.LLVMConstInt(node.typ.typ.toLLVM(), @intCast(i), 1), node.typ.typ),
-            .floatLiteral => |f| return .makeValue(c.LLVMConstReal(node.typ.typ.toLLVM(), @floatCast(f)), node.typ.typ),
-            .boolLiteral => |b| return .makeValue(c.LLVMConstInt(node.typ.typ.toLLVM(), if(b) 1 else 0, 0), node.typ.typ),
-            .nullLiteral => return .makeValue(c.LLVMConstPointerNull(c.LLVMPointerType(c.LLVMIntType(8), 0)), node.typ.typ),
+            .intLiteral => return .makeConst(node.typ.value.constant, node.typ.typ),
+            .floatLiteral => return .makeConst(node.typ.value.constant, node.typ.typ),
+            .boolLiteral => return .makeConst(node.typ.value.constant, node.typ.typ),
+            .nullLiteral => return .makeConst(node.typ.value.constant, node.typ.typ),
             .stringLiteral => |s| {
                 const unescaped = unescape(std.heap.smp_allocator, s) catch unreachable;
                 defer std.heap.smp_allocator.free(unescaped);
@@ -207,6 +210,10 @@ pub const CodeGenerator = struct {
             },
 
             .intType, .uintType, .floatType, .doubleType, .boolType, .voidType => return .makeType(node.typ.value.typ),
+
+            .typeType => {
+                return .makeConst(node.typ.value.constant, node.typ.typ);
+            },
 
             .array => |a| {
                 const typ = a.type.typ.value.typ;
@@ -277,8 +284,7 @@ pub const CodeGenerator = struct {
                 return Value.member(self.builder, expr, m.field);
             },
             .varDecl => |v| {
-                if(v.typ.?.typ.value.typ.data == .type) return null;
-
+                if(v.typ.?.typ.value.typ.data == .type or v.typ.?.typ.value.typ.isConstant()) return null;
                 const varType = v.typ.?.typ.value.typ;
                 const storageType = Type.makeStorageType(.{.ptr = varType});
 

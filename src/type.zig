@@ -10,6 +10,9 @@ pub const TypeData = union(enum) {
     },
     float: u32,
     bool: void,
+    const_int: void,
+    const_float: void,
+    const_bool: void,
     null: void,
     void: void,
     array: struct {
@@ -48,7 +51,7 @@ pub const Type = struct {
 
     pub fn isNumeric(self: *Type) bool {
         switch(self.data) {
-            .int, .float => return true,
+            .int, .float, .const_int, .const_float => return true,
             else => return false,
         }
     }
@@ -56,6 +59,13 @@ pub const Type = struct {
     pub fn isPointer(self: *Type) bool {
         switch(self.data) {
             .ptr, .manyPtr, .slice => return true,
+            else => return false,
+        }
+    }
+
+    pub fn isConstant(self: *Type) bool {
+        switch(self.data) {
+            .const_int, .const_float, .const_bool, .null => return true,
             else => return false,
         }
     }
@@ -108,7 +118,7 @@ pub const Type = struct {
 
     pub fn supportsEql(self: *Type) bool {
         switch(self.data) {
-            .int, .float, .bool, .ptr, .type => return true,
+            .int, .float, .const_int, .const_float, .const_bool, .bool, .ptr, .type => return true,
             else => return false,
         }
     }
@@ -122,11 +132,21 @@ pub const Type = struct {
         return self.eql(other);
     }
 
-    pub fn coerceTo(self: *Type, other: *Type) *Type {
+    pub fn coerceValues(self: *Type, other: *Type) *Type {
         if(self.data == .slice and other.data == .manyPtr and self.data.slice.eql(other.data.manyPtr)) return other;
 
         if(!self.isNumeric() or !other.isNumeric()) @panic("attempting to find more precise numeric type on non-numeric types");
         if(self.eql(other)) return self;
+        if(self.data == .const_int and other.data == .int) return other;
+        if(self.data == .const_int and other.data == .float) return other;
+        if(self.data == .const_float and other.data == .int) return other;
+        if(self.data == .const_float and other.data == .float) return other;
+        if(self.data == .const_bool and other.data == .bool) return other;
+        if(self.data == .int and other.data == .const_int) return self;
+        if(self.data == .float and other.data == .const_int) return self;
+        if(self.data == .int and other.data == .const_float) return self;
+        if(self.data == .float and other.data == .const_float) return self;
+        if(self.data == .bool and other.data == .const_bool) return self;
         if(self.data == .int and other.data == .int) {
             if(self.data.int.bits > other.data.int.bits) {
                 return self;
@@ -152,7 +172,7 @@ pub const Type = struct {
         if(a.isStorage != b.isStorage) return false;
         if(std.meta.activeTag(a.data) != std.meta.activeTag(b.data)) return false;
         switch(std.meta.activeTag(a.data)) {
-            .bool, .void, .null, .type => {
+            .bool, .void, .null, .type, .const_int, .const_float, .const_bool => {
                 return true;
             },
             .int => {
@@ -195,6 +215,15 @@ pub const Type = struct {
             },
             .void => {
                 return allocator.dupe(u8, "void") catch unreachable;
+            },
+            .const_int => {
+                return allocator.dupe(u8, "const_int") catch unreachable;
+            },
+            .const_float => {
+                return allocator.dupe(u8, "const_float") catch unreachable;
+            },
+            .const_bool => {
+                return allocator.dupe(u8, "const_bool") catch unreachable;
             },
             .int => |i| {
                 const char: u8 = if(i.signed) 'i' else 'u';
@@ -249,9 +278,6 @@ pub const Type = struct {
             .void => {
                 return c.LLVMVoidType();
             },
-            .null => {
-                @panic("null cannot be represented without a type");
-            },
             .int => |i| {
                 return c.LLVMIntType(@intCast(i.bits));
             },
@@ -289,11 +315,19 @@ pub const Type = struct {
     }
 };
 
+pub const ConstVal = union(enum) {
+    int: i64,
+    float: f64,
+    bool: bool,
+    null: void,
+};
+
 pub const ComptimeValue = struct {
     value: union(enum) {
         none: void,
         runtime: void,
         typ: *Type,
+        constant: ConstVal,
     },
     typ: *Type,
 
@@ -316,5 +350,233 @@ pub const ComptimeValue = struct {
             .value = .{.typ = typ},
             .typ = .makeType(.type),
         };
+    }
+
+    pub fn makeConstant(typ: *Type, value: ConstVal) ComptimeValue {
+        return .{
+            .value = .{.constant = value},
+            .typ = typ
+        };
+    }
+
+    pub fn print(self: ComptimeValue) void {
+        switch (self.value) {
+            .none => {
+                std.debug.print("ComptimeValue(none, type={s})\n", .{
+                    self.typ.toString(std.heap.smp_allocator),
+                });
+            },
+
+            .runtime => {
+                const typ_str = self.typ.toString(std.heap.smp_allocator);
+                defer std.heap.smp_allocator.free(typ_str);
+
+                std.debug.print("ComptimeValue(runtime, type={s})\n", .{
+                    typ_str,
+                });
+            },
+
+            .typ => |t| {
+                const value_str = t.toString(std.heap.smp_allocator);
+                defer std.heap.smp_allocator.free(value_str);
+
+                std.debug.print("ComptimeValue(type, value={s})\n", .{
+                    value_str,
+                });
+            },
+
+            .constant => |cval| {
+                const typ_str = self.typ.toString(std.heap.smp_allocator);
+                defer std.heap.smp_allocator.free(typ_str);
+
+                switch (cval) {
+                    .int => |v| {
+                        std.debug.print(
+                            "ComptimeValue(constant, type={s}, value={d})\n",
+                            .{ typ_str, v },
+                        );
+                    },
+                    .float => |v| {
+                        std.debug.print(
+                            "ComptimeValue(constant, type={s}, value={d})\n",
+                            .{ typ_str, v },
+                        );
+                    },
+                    .bool => |v| {
+                        std.debug.print(
+                            "ComptimeValue(constant, type={s}, value={})\n",
+                            .{ typ_str, v },
+                        );
+                    },
+                    .null => {
+                        std.debug.print(
+                            "ComptimeValue(constant, type={s}, value=null)\n",
+                            .{ typ_str },
+                        );
+                    },
+                }
+            },
+        }
+    }
+
+    pub fn castToHigher(self: ComptimeValue, other: ComptimeValue) ?ComptimeValue {
+        if(self.typ.data == .const_bool and other.typ.data == .bool)
+            return other;
+        if(self.typ.data == .bool and other.typ.data == .const_bool)
+            return self;
+        if(self.typ.data == .const_bool and other.typ.data == .const_bool)
+            return self;
+        if(!self.typ.isNumeric() or !self.typ.isNumeric())
+            return null;
+        if(self.value == .runtime and other.value == .runtime)
+            return .makeRuntime(self.typ.coerceValues(other.typ));
+        if(self.value == .runtime and other.value == .constant)
+            return self;
+        if(self.value == .constant and other.value == .runtime)
+            return other;
+        if(self.typ.data == .const_int and other.typ.data == .const_int)
+            return self;
+        if(self.typ.data == .const_int and other.typ.data == .const_float)
+            return .makeConstant(other.typ, .{.float = @as(f64, @floatFromInt(self.value.constant.int))});
+        if(self.typ.data == .const_float and other.typ.data == .const_int)
+            return .makeConstant(self.typ, .{.float = self.value.constant.float});
+        if(self.typ.data == .const_float and other.typ.data == .const_float)
+            return self;
+        return null;
+    }
+
+    pub fn add(self: ComptimeValue, other: ComptimeValue) ?ComptimeValue {
+        if(!self.typ.isNumeric()) return null;
+        if(!other.typ.isNumeric()) return null;
+        if(self.typ.isConstant() and other.typ.isConstant()) {
+            const left = self.castToHigher(other) orelse return null;
+            const right = other.castToHigher(self) orelse return null;
+            if(left.typ.data == .const_int)
+                return .makeConstant(left.typ, .{.int = left.value.constant.int +% right.value.constant.int});
+            if(left.typ.data == .const_float)
+                return .makeConstant(left.typ, .{.float = left.value.constant.float + right.value.constant.float});
+        }
+        const typ = Type.coerceValues(self.typ, other.typ);
+        return .makeRuntime(typ);
+    }
+
+    pub fn sub(self: ComptimeValue, other: ComptimeValue) ?ComptimeValue {
+        if(!self.typ.isNumeric()) return null;
+        if(!other.typ.isNumeric()) return null;
+        if(self.typ.isConstant() and other.typ.isConstant()) {
+            const left = self.castToHigher(other) orelse return null;
+            const right = other.castToHigher(self) orelse return null;
+            if(left.typ.data == .const_int)
+                return .makeConstant(left.typ, .{.int = left.value.constant.int -% right.value.constant.int});
+            if(left.typ.data == .const_float)
+                return .makeConstant(left.typ, .{.float = left.value.constant.float - right.value.constant.float});
+        }
+        const typ = Type.coerceValues(self.typ, other.typ);
+        return .makeRuntime(typ);
+    }
+
+    pub fn mul(self: ComptimeValue, other: ComptimeValue) ?ComptimeValue {
+        if(!self.typ.isNumeric()) return null;
+        if(!other.typ.isNumeric()) return null;
+        if(self.typ.isConstant() and other.typ.isConstant()) {
+            const left = self.castToHigher(other) orelse return null;
+            const right = other.castToHigher(self) orelse return null;
+            if(left.typ.data == .const_int)
+                return .makeConstant(left.typ, .{.int = left.value.constant.int *% right.value.constant.int});
+            if(left.typ.data == .const_float)
+                return .makeConstant(left.typ, .{.float = left.value.constant.float * right.value.constant.float});
+        }
+        const typ = Type.coerceValues(self.typ, other.typ);
+        return .makeRuntime(typ);
+    }
+
+    pub fn div(self: ComptimeValue, other: ComptimeValue) ?ComptimeValue {
+        if(!self.typ.isNumeric()) return null;
+        if(!other.typ.isNumeric()) return null;
+        if(self.typ.isConstant() and other.typ.isConstant()) {
+            const left = self.castToHigher(other) orelse return null;
+            const right = other.castToHigher(self) orelse return null;
+            if(left.typ.data == .const_int)
+                return .makeConstant(left.typ, .{.int = @divTrunc(left.value.constant.int, right.value.constant.int)});
+            if(left.typ.data == .const_float)
+                return .makeConstant(left.typ, .{.float = left.value.constant.float / right.value.constant.float});
+        }
+        const typ = Type.coerceValues(self.typ, other.typ);
+        return .makeRuntime(typ);
+    }
+
+    pub fn lt(self: ComptimeValue, other: ComptimeValue) ?ComptimeValue {
+        if(!self.typ.isNumeric()) return null;
+        if(!other.typ.isNumeric()) return null;
+        if(self.typ.isConstant() and other.typ.isConstant()) {
+            const left = self.castToHigher(other) orelse return null;
+            const right = other.castToHigher(self) orelse return null;
+            if(left.typ.data == .const_int)
+                return .makeConstant(.makeType(.const_bool), .{.bool = left.value.constant.int < right.value.constant.int});
+            if(left.typ.data == .const_float)
+                return .makeConstant(.makeType(.const_bool), .{.bool = left.value.constant.float < right.value.constant.float});
+        }
+        return .makeRuntime(.makeType(.bool));
+    }
+
+    pub fn lte(self: ComptimeValue, other: ComptimeValue) ?ComptimeValue {
+        if(!self.typ.isNumeric()) return null;
+        if(!other.typ.isNumeric()) return null;
+        if(self.typ.isConstant() and other.typ.isConstant()) {
+            const left = self.castToHigher(other) orelse return null;
+            const right = other.castToHigher(self) orelse return null;
+            if(left.typ.data == .const_int)
+                return .makeConstant(.makeType(.const_bool), .{.bool = left.value.constant.int <= right.value.constant.int});
+            if(left.typ.data == .const_float)
+                return .makeConstant(.makeType(.const_bool), .{.bool = left.value.constant.float <= right.value.constant.float});
+        }
+        return .makeRuntime(.makeType(.bool));
+    }
+
+    pub fn gt(self: ComptimeValue, other: ComptimeValue) ?ComptimeValue {
+        if(!self.typ.isNumeric()) return null;
+        if(!other.typ.isNumeric()) return null;
+        if(self.typ.isConstant() and other.typ.isConstant()) {
+            const left = self.castToHigher(other) orelse return null;
+            const right = other.castToHigher(self) orelse return null;
+            if(left.typ.data == .const_int)
+                return .makeConstant(.makeType(.const_bool), .{.bool = left.value.constant.int > right.value.constant.int});
+            if(left.typ.data == .const_float)
+                return .makeConstant(.makeType(.const_bool), .{.bool = left.value.constant.float > right.value.constant.float});
+        }
+        return .makeRuntime(.makeType(.bool));
+    }
+
+    pub fn gte(self: ComptimeValue, other: ComptimeValue) ?ComptimeValue {
+        if(!self.typ.isNumeric()) return null;
+        if(!other.typ.isNumeric()) return null;
+        if(self.typ.isConstant() and other.typ.isConstant()) {
+            const left = self.castToHigher(other) orelse return null;
+            const right = other.castToHigher(self) orelse return null;
+            if(left.typ.data == .const_int)
+                return .makeConstant(.makeType(.const_bool), .{.bool = left.value.constant.int >= right.value.constant.int});
+            if(left.typ.data == .const_float)
+                return .makeConstant(.makeType(.const_bool), .{.bool = left.value.constant.float >= right.value.constant.float});
+        }
+        return .makeRuntime(.makeType(.bool));
+    }
+
+    pub fn neg(self: ComptimeValue) ?ComptimeValue {
+        if(!self.typ.isNumeric()) return null;
+        if(self.typ.isConstant()) {
+            if(self.typ.data == .const_int)
+                return .makeConstant(self.typ, .{.int = -self.value.constant.int});
+            if(self.typ.data == .const_float)
+                return .makeConstant(self.typ, .{.float = -self.value.constant.float});
+        }
+        return self;
+    }
+
+    pub fn not(self: ComptimeValue) ?ComptimeValue {
+        if(self.typ.data != .bool) return null;
+        if(self.typ.isConstant()) {
+            return .makeConstant(self.typ, .{.bool = !self.value.constant.bool});
+        }
+        return self;
     }
 };

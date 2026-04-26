@@ -124,13 +124,14 @@ pub const TypeChecker = struct {
         return .{.success = .makeRuntime(funcType)};
     }
 
-    fn makeCast(self: *TypeChecker, val: *Node, prevTyp: *Type, typ: *Type) *Node {
-        if(prevTyp.eql(typ)) return val;
-        const typNode = self.makeNode(.typeType, .makeType(typ));
+    fn makeCast(self: *TypeChecker, val: *Node, prevTyp: *Type, typ: ComptimeValue) *Node {
+        if(typ.typ.isConstant()) return self.makeNode(.typeType, typ);
+        if(prevTyp.eql(typ.typ)) return val;
+        const typNode = self.makeNode(.typeType, .makeType(typ.typ));
         return self.makeNode(.{.cast = .{
             .val = val,
             .type = typNode,
-        }}, .makeRuntime(typ));
+        }}, typ);
     }
 
     pub fn infer(self: *TypeChecker, node: *Node) TypeResult {
@@ -142,10 +143,10 @@ pub const TypeChecker = struct {
                 }
                 break :blk .makeNone();
             },
-            .intLiteral => .makeRuntime(.makeType(.{ .int = .{ .signed = true, .bits = 32 } })),
-            .floatLiteral => .makeRuntime(.makeType(.{ .float = 32 })),
-            .boolLiteral => .makeRuntime(.makeType(.bool)),
-            .nullLiteral => .makeRuntime(.makeType(.null)),
+            .intLiteral => |i| .makeConstant(.makeType(.const_int), .{.int = i}),
+            .floatLiteral => |f| .makeConstant(.makeType(.const_float), .{.float = f}),
+            .boolLiteral => |b| .makeConstant(.makeType(.const_bool), .{.bool = b}),
+            .nullLiteral => .makeConstant(.makeType(.null), .null),
             .stringLiteral => .makeRuntime(.makeType(.{ .slice = Type.makeType(.{.int = .{.bits = 8, .signed = false} }) })),
 
             .intType => |bits| .makeType(.makeType(.{ .int = .{ .signed = true, .bits = bits } })),
@@ -191,7 +192,7 @@ pub const TypeChecker = struct {
                 for(a.children, 0..) |child, i| {
                     const res = self.check(child, childType);
                     if(res == .failure) return res;
-                    node.inner.array.children[i] = self.makeCast(child, child.typ.typ, childType);
+                    node.inner.array.children[i] = self.makeCast(child, child.typ.typ, .makeRuntime(childType));
                 }
 
                 break :blk .makeRuntime(typ.success.value.typ);
@@ -224,65 +225,74 @@ pub const TypeChecker = struct {
                 const right = self.inferExpr(b.right);
                 if(right == .failure) return right;
 
+                const isConstant = left.success.typ.isConstant() and right.success.typ.isConstant();
+
                 const res: ?ComptimeValue = binBlk: switch (b.op) {
                     .plus => {
-                        if(!left.success.typ.isNumeric()) break :binBlk null;
-                        if(!right.success.typ.isNumeric()) break :binBlk null;
-                        const typ = Type.coerceTo(left.success.typ, right.success.typ);
+                        const typ = left.success.add(right.success) orelse break :binBlk null;
                         node.inner.binary.left = self.makeCast(b.left, left.success.typ, typ);
                         node.inner.binary.right = self.makeCast(b.right, right.success.typ, typ);
-                        break :binBlk .makeRuntime(typ);
+                        break :blk typ;
                     },
                     .minus => {
-                        if(!left.success.typ.isNumeric()) break :binBlk null;
-                        if(!right.success.typ.isNumeric()) break :binBlk null;
-                        const typ = Type.coerceTo(left.success.typ, right.success.typ);
+                        const typ = left.success.sub(right.success) orelse break :binBlk null;
                         node.inner.binary.left = self.makeCast(b.left, left.success.typ, typ);
                         node.inner.binary.right = self.makeCast(b.right, right.success.typ, typ);
-                        break :binBlk .makeRuntime(typ);
+                        break :blk typ;
                     },
                     .star => {
-                        if(!left.success.typ.isNumeric()) break :binBlk null;
-                        if(!right.success.typ.isNumeric()) break :binBlk null;
-                        const typ = Type.coerceTo(left.success.typ, right.success.typ);
+                        const typ = left.success.mul(right.success) orelse break :binBlk null;
                         node.inner.binary.left = self.makeCast(b.left, left.success.typ, typ);
                         node.inner.binary.right = self.makeCast(b.right, right.success.typ, typ);
-                        break :binBlk .makeRuntime(typ);
+                        break :blk typ;
                     },
                     .slash => {
-                        if(!left.success.typ.isNumeric()) break :binBlk null;
-                        if(!right.success.typ.isNumeric()) break :binBlk null;
-                        const typ = Type.coerceTo(left.success.typ, right.success.typ);
+                        const typ = left.success.div(right.success) orelse break :binBlk null;
                         node.inner.binary.left = self.makeCast(b.left, left.success.typ, typ);
                         node.inner.binary.right = self.makeCast(b.right, right.success.typ, typ);
-                        break :binBlk .makeRuntime(typ);
+                        break :blk typ;
                     },
-                    .lt, .lt_eq, .gt, .gt_eq => {
-                        if(!left.success.typ.canCoerce(right.success.typ)) break :binBlk null;
-                        if(!left.success.typ.isNumeric()) break :binBlk null;
-                        if(!right.success.typ.isNumeric()) break :binBlk null;
-                        const typ = Type.coerceTo(left.success.typ, right.success.typ);
-                        node.inner.binary.left = self.makeCast(b.left, left.success.typ, typ);
-                        node.inner.binary.right = self.makeCast(b.right, right.success.typ, typ);
-                        break :binBlk .makeRuntime(.makeType(.bool));
+                    .lt => {
+                        const typ = left.success.lt(right.success) orelse break :binBlk null;
+                        node.inner.binary.left = self.makeCast(b.left, left.success.typ, ComptimeValue.castToHigher(left.success, right.success) orelse break :binBlk null);
+                        node.inner.binary.right = self.makeCast(b.right, right.success.typ, ComptimeValue.castToHigher(right.success, left.success) orelse break :binBlk null);
+                        break :blk typ;
+                    },
+                    .lt_eq => {
+                        const typ = left.success.lte(right.success) orelse break :binBlk null;
+                        node.inner.binary.left = self.makeCast(b.left, left.success.typ, ComptimeValue.castToHigher(left.success, right.success) orelse break :binBlk null);
+                        node.inner.binary.right = self.makeCast(b.right, right.success.typ, ComptimeValue.castToHigher(right.success, left.success) orelse break :binBlk null);
+                        break :blk typ;
+                    },
+                    .gt => {
+                        const typ = left.success.gt(right.success) orelse break :binBlk null;
+                        node.inner.binary.left = self.makeCast(b.left, left.success.typ, ComptimeValue.castToHigher(left.success, right.success) orelse break :binBlk null);
+                        node.inner.binary.right = self.makeCast(b.right, right.success.typ, ComptimeValue.castToHigher(right.success, left.success) orelse break :binBlk null);
+                        break :blk typ;
+                    },
+                    .gt_eq => {
+                        const typ = left.success.gte(right.success) orelse break :binBlk null;
+                        node.inner.binary.left = self.makeCast(b.left, left.success.typ, ComptimeValue.castToHigher(left.success, right.success) orelse break :binBlk null);
+                        node.inner.binary.right = self.makeCast(b.right, right.success.typ, ComptimeValue.castToHigher(right.success, left.success) orelse break :binBlk null);
+                        break :blk typ;
                     },
                     .eq_eq => {
                         if(!left.success.typ.canCoerce(right.success.typ)) break :binBlk null;
                         if(!left.success.typ.supportsEql()) break :binBlk null;
                         if(!right.success.typ.supportsEql()) break :binBlk null;
-                        const typ = Type.coerceTo(left.success.typ, right.success.typ);
-                        node.inner.binary.left = self.makeCast(b.left, left.success.typ, typ);
-                        node.inner.binary.right = self.makeCast(b.right, right.success.typ, typ);
-                        break :binBlk .makeRuntime(.makeType(.bool));
+                        const typ = Type.coerceValues(left.success.typ, right.success.typ);
+                        node.inner.binary.left = self.makeCast(b.left, left.success.typ, .makeRuntime(typ));
+                        node.inner.binary.right = self.makeCast(b.right, right.success.typ, .makeRuntime(typ));
+                        break :binBlk .makeRuntime(.makeType(if(isConstant) .const_bool else .bool));
                     },
                     .bang_eq => {
                         if(!left.success.typ.canCoerce(right.success.typ)) break :binBlk null;
                         if(!left.success.typ.supportsEql()) break :binBlk null;
                         if(!right.success.typ.supportsEql()) break :binBlk null;
-                        const typ = Type.coerceTo(left.success.typ, right.success.typ);
-                        node.inner.binary.left = self.makeCast(b.left, left.success.typ, typ);
-                        node.inner.binary.right = self.makeCast(b.right, right.success.typ, typ);
-                        break :binBlk .makeRuntime(.makeType(.bool));
+                        const typ = Type.coerceValues(left.success.typ, right.success.typ);
+                        node.inner.binary.left = self.makeCast(b.left, left.success.typ, .makeRuntime(typ));
+                        node.inner.binary.right =   self.makeCast(b.right, right.success.typ, .makeRuntime(typ));
+                        break :binBlk .makeRuntime(.makeType(if(isConstant) .const_bool else .bool));
                     },
                     else => std.debug.panic("found illegal instruction {s}", .{@tagName(b.op)}),
                 };
@@ -306,7 +316,7 @@ pub const TypeChecker = struct {
                                 .span = u.expr.span,
                             }};
                         }
-                        break :blk t.success;
+                        break :blk t.success.neg().?;
                     },
                     .bang => {
                         if(t.success.typ.data != .bool) {
@@ -315,7 +325,7 @@ pub const TypeChecker = struct {
                                 .span = u.expr.span,
                             }};
                         }
-                        break :blk .makeRuntime(.makeType(.bool));
+                        break :blk t.success.not().?;
                     },
                     else => unreachable,
                 }
@@ -342,12 +352,12 @@ pub const TypeChecker = struct {
                 if(i.start) |start| {
                     const startRes = self.check(start, idxType);
                     if(startRes == .failure) return startRes;
-                    node.inner.index.start = self.makeCast(start, start.typ.typ, idxType);
+                    node.inner.index.start = self.makeCast(start, start.typ.typ, .makeRuntime(idxType));
                 }
                 if(i.end) |end| {
                     const endRes = self.check(end, idxType);
                     if(endRes == .failure) return endRes;
-                    node.inner.index.end = self.makeCast(end, end.typ.typ, idxType);
+                    node.inner.index.end = self.makeCast(end, end.typ.typ, .makeRuntime(idxType));
                 }
 
                 const indexed = left.success.typ.indexed(i.multiple) orelse return .{.failure = .{
@@ -387,7 +397,7 @@ pub const TypeChecker = struct {
                                 .span = node.span,
                             }};
                         };
-                        node.inner.varDecl.init = self.makeCast(v.init.?, v.init.?.typ.typ, unified);
+                        node.inner.varDecl.init = self.makeCast(v.init.?, v.init.?.typ.typ, .makeRuntime(unified));
                         break :declaredBlk .makeType(unified);
                     }
 
@@ -398,20 +408,28 @@ pub const TypeChecker = struct {
                 };
 
                 if(finalType.value.typ.data == .type) {
-                    self.ctx.set(v.name, finalType);
+                    self.ctx.set(v.name, initType.?.success);
+                } else if(finalType.value.typ.isConstant()) {
+                    self.ctx.set(v.name, initType.?.success);
                 } else {
                     self.ctx.set(v.name, .makeRuntime(.makeStorageType(.{.ptr = finalType.value.typ})));
                 }
+                // std.debug.print("{s} ", .{v.name});
+                // self.ctx.get(v.name).?.print();
+                // std.debug.print("{s} ", .{v.name});
+                // node.inner.varDecl.typ.?.typ.print();
+                // std.debug.print("\n", .{});
                 break :blk .makeNone();
             },
             .assign => |a| {
+                // a.target.print(0); std.debug.print(" {s}\n", .{@tagName(a.target.inner)});
                 const targetType = self.inferStorage(a.target);
                 if(targetType == .failure) return targetType;
 
                 const res = self.check(a.value, targetType.success.typ.data.ptr);
                 if(res == .failure) return res;
 
-                node.inner.assign.value = self.makeCast(a.value, a.value.typ.typ, targetType.success.typ.data.ptr);
+                node.inner.assign.value = self.makeCast(a.value, a.value.typ.typ, .makeRuntime(targetType.success.typ.data.ptr));
                 break :blk res.success;
             },
             .call => |c| {
@@ -432,7 +450,7 @@ pub const TypeChecker = struct {
                         for (f.params, 0..) |param, i| {
                             const res = self.check(c.args[i], param);
                             if(res == .failure) return res;
-                            node.inner.call.args[i] = self.makeCast(c.args[i], res.success.typ, param);
+                            node.inner.call.args[i] = self.makeCast(c.args[i], res.success.typ, .makeRuntime(param));
                         }
                         if(c.args.len > f.params.len) {
                             for(f.params.len..c.args.len) |i| {
@@ -456,7 +474,7 @@ pub const TypeChecker = struct {
                 if(r) |ret| {
                     const res = self.check(ret, self.currentFunc.?.data.func.returnType);
                     if(res == .failure) return res;
-                    node.inner.@"return" = self.makeCast(ret, ret.typ.typ, self.currentFunc.?.data.func.returnType);
+                    node.inner.@"return" = self.makeCast(ret, ret.typ.typ, .makeRuntime(self.currentFunc.?.data.func.returnType));
                 } else {
                     if(self.unify(Type.makeType(.void), self.currentFunc.?.data.func.returnType) == null) {
                         return .{
@@ -505,7 +523,7 @@ pub const TypeChecker = struct {
                     const condition = self.check(cond, .makeType(.bool));
                     if(condition == .failure) return condition;
 
-                    node.inner.@"if".cond[j] = self.makeCast(cond, cond.typ.typ, .makeType(.bool));
+                    node.inner.@"if".cond[j] = self.makeCast(cond, cond.typ.typ, .makeRuntime(.makeType(.bool)));
 
                     const body = self.inferStmt(then);
                     if(body == .failure) return body;
@@ -527,7 +545,7 @@ pub const TypeChecker = struct {
                 const cond = self.check(w.cond, .makeType(.bool));
                 if(cond == .failure) return cond;
 
-                node.inner.@"while".cond = self.makeCast(w.cond, w.cond.typ.typ, .makeType(.bool));
+                node.inner.@"while".cond = self.makeCast(w.cond, w.cond.typ.typ, .makeRuntime(.makeType(.bool)));
 
                 const body = self.inferStmt(w.body);
                 if(body == .failure) return body;
@@ -548,7 +566,7 @@ pub const TypeChecker = struct {
                 if(f.condition) |condition| {
                     const condRes = self.infer(condition);
                     if(condRes == .failure) return condRes;
-                    node.inner.@"for".condition = self.makeCast(condition, condition.typ.typ, .makeType(.bool));
+                    node.inner.@"for".condition = self.makeCast(condition, condition.typ.typ, .makeRuntime(.makeType(.bool)));
                 }
 
                 if(f.iterate) |iterate| {
@@ -562,6 +580,9 @@ pub const TypeChecker = struct {
             },
             else => std.debug.panic("Node type checking not implemented for {s}", .{@tagName(node.inner)}),
         };
+        if(typ.typ.isConstant()) {
+            node.* = self.makeNode(.typeType, typ).*;
+        }
         node.typ = typ;
         return .{.success = typ};
     }

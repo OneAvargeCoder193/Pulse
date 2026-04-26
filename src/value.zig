@@ -1,12 +1,15 @@
 const std = @import("std");
 
 const c = @import("codegen.zig").c;
-const Type = @import("type.zig").Type;
+const type_zig = @import("type.zig");
+const ConstVal = type_zig.ConstVal;
+const Type = type_zig.Type;
 
 pub const Value = struct {
     val: union{
         val: c.LLVMValueRef,
         typ: c.LLVMTypeRef,
+        constant: ConstVal
     },
     type: *Type,
 
@@ -20,6 +23,13 @@ pub const Value = struct {
     pub fn makeType(typ: *Type) Value {
         return .{
             .val = .{.typ = typ.toLLVM()},
+            .type = typ,
+        };
+    }
+
+    pub fn makeConst(val: ConstVal, typ: *Type) Value {
+        return .{
+            .val = .{.constant = val},
             .type = typ,
         };
     }
@@ -52,8 +62,41 @@ pub const Value = struct {
         if(!self.type.eql(other.type)) @panic("type mismatch");
     }
 
+    fn wrappingCast(comptime To: type, v: anytype) To {
+        const From = @TypeOf(v);
+
+        const from_info = @typeInfo(From).int;
+        const to_info = @typeInfo(To).int;
+
+        const UnsignedFrom = @Int(.unsigned, from_info.bits);
+
+        const bits = @as(UnsignedFrom, @bitCast(v));
+
+        if (to_info.bits < from_info.bits) {
+            return @truncate(bits);
+        } else {
+            return @as(To, bits);
+        }
+    }
+
     fn castNumeric(builder: c.LLVMBuilderRef, v: Value, typ: *Type) Value {
         var val: c.LLVMValueRef = undefined;
+        if(v.type.data == .const_int and typ.data == .int) {
+            return .makeValue(c.LLVMConstInt(typ.toLLVM(), wrappingCast(c_ulonglong, v.val.constant.int), if(typ.data.int.signed) 1 else 0), typ);
+        }
+        if(v.type.data == .const_int and typ.data == .float) {
+            return .makeValue(c.LLVMConstReal(typ.toLLVM(), @floatFromInt(v.val.constant.int)), typ);
+        }
+        if(v.type.data == .const_float and typ.data == .int) {
+            return .makeValue(c.LLVMConstInt(typ.toLLVM(), @trunc(v.val.constant.float), if(typ.data.int.signed) 1 else 0), typ);
+        }
+        if(v.type.data == .const_float and typ.data == .float) {
+            return .makeValue(c.LLVMConstReal(typ.toLLVM(), v.val.constant.float), typ);
+        }
+        if(v.type.data == .const_bool and typ.data == .bool) {
+            return .makeValue(c.LLVMConstInt(typ.toLLVM(), if(v.val.constant.bool) 1 else 0, 0), typ);
+        }
+        
         if(v.type.data == .int and typ.data == .int) {
             val = c.LLVMBuildIntCast2(builder, v.value(), typ.toLLVM(), if(typ.data.int.signed) 1 else 0, "");
         } else if(v.type.data == .float and typ.data == .float) {
