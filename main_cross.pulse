@@ -1,0 +1,125 @@
+// THIS DOESN'T WORK YET
+
+func GetStdHandle(nStdHandle: u64) *u8;
+func WriteConsoleA(
+    hConsoleOutput: *u8,
+    lpBuffer: [*]u8,
+    nNumberOfCharsToWrite: u64,
+    lpNumberOfCharsWritten: *u64,
+    lpReserved: *u8,
+) bool;
+
+var handle = linux?i64:*u8;
+
+var stdout: handle;
+
+func write(file: handle, str: []u8) void {
+    if(linux) {
+        asm sideeffect (
+            "syscall"
+            :
+            : "{rax}"(1), "{rdi}"(file), "{rsi}"(str.ptr), "{rdx}"(str.len)
+            : "rcx", "r11", "memory"
+        );
+    } else {
+        WriteConsoleA(file, str.ptr, str.len, null, null);
+    }
+}
+
+func writeChar(file: *u8, char: u8) void {
+    var arr = [1]u8 {char};
+    write(file, arr[:]);
+}
+
+func writeUint(file: *u8, int: u32) void {
+    if(int == 0) {
+        writeChar(file, 48);
+        return;
+    }
+
+    var data: [10]u8;
+    var i: u32 = 10;
+    while(int != 0) {
+        var digit: u8 = int - (int / 10) * 10;
+        data[i = i - 1] = digit + 48;
+        int = int / 10;
+    }
+    write(file, data[i:]);
+}
+
+func writeInt(file: *u8, int: i32) void {
+    if(int < 0) {
+        writeChar(file, 45);
+        int = -int;
+    }
+    writeUint(file, int);
+}
+
+func sqrt(n: i32) i32 {
+    if(n < 0) {
+        return -1;
+    }
+    var low: i32 = 0;
+    var high: i32 = n;
+    while(low <= high) {
+        var mid: i32 = (low + high) / 2;
+        var sq = mid * mid;
+        if(sq == n) {
+            return mid;
+        } else if (sq < n) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return -1;
+}
+
+func add(a: i32, b: i32) i32 {
+    var res: i32;
+    asm sideeffect (
+        "addl $1, $0\nmovl $2, $0"
+        : "=r"(res)
+        : "r"(a), "r"(b)
+        : "cc"
+    );
+    return res;
+}
+
+func main() i32 {
+    if(linux) {
+        stdout = GetStdHandle(-11);
+    } else {
+        stdout = 1;
+    }
+
+    var i: i32 = 0;
+    while (i < 10) {
+        write(stdout, "Hello, World (");
+        writeUint(stdout, i);
+        write(stdout, ")!\n");
+        i = i + 1;
+    }
+
+    for(var a: i32 = 1; a < 15; a = a + 1) {
+        for(var b: i32 = 1; b < 15; b = b + 1) {
+            var hypot = sqrt(a * a + b * b);
+            if(hypot >= 0) {
+                writeUint(stdout, a);
+                write(stdout, "^2 + ");
+                writeUint(stdout, b);
+                write(stdout, "^2 = ");
+                writeUint(stdout, hypot);
+                write(stdout, "^2\n");
+            }
+        }
+    }
+
+    writeChar(stdout, 65);
+    writeChar(stdout, 10);
+    writeUint(stdout, add(69000, 420));
+    writeChar(stdout, 10);
+    writeInt(stdout, -420);
+
+    return 0;
+}

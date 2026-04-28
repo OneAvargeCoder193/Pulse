@@ -133,6 +133,11 @@ pub const Value = struct {
             );
         } else if(v.type.isNumeric() and typ.isNumeric()) {
             return castNumeric(builder, v, typ);
+        } else if(v.type.data == .const_bool and typ.data == .bool) {
+            return .makeValue(
+                c.LLVMConstInt(c.LLVMInt1Type(), if(v.val.constant.bool) 1 else 0, 0),
+                typ
+            );
         }
         @panic("invalid cast");
     }

@@ -383,6 +383,12 @@ pub const TypeChecker = struct {
                 if(v.init) |ini| {
                     initType = self.inferExpr(ini);
                     if(initType.? == .failure) return initType.?;
+                    if(self.currentFunc == null and !initType.?.success.typ.isConstant()) {
+                        return .{.failure = .{
+                            .kind = .mustBeConstant,
+                            .span = ini.span,
+                        }};
+                    }
                 }
 
                 const finalType: ComptimeValue = if (v.typ) |typNode| declaredBlk: {
@@ -391,14 +397,13 @@ pub const TypeChecker = struct {
                     const declared = declaredTyp.success.value.typ;
                     
                     if(v.init) |_| {
-                        const unified = self.unify(declared, initType.?.success.typ) orelse {
+                        _ = self.unify(initType.?.success.typ, declared) orelse {
                             return .{.failure = .{
                                 .kind = .{.typeMismatch = .{.expected = declared, .found = initType.?.success.typ}},
                                 .span = node.span,
                             }};
                         };
-                        node.inner.varDecl.init = self.makeCast(v.init.?, v.init.?.typ.typ, .makeRuntime(unified));
-                        break :declaredBlk .makeType(unified);
+                        node.inner.varDecl.init = self.makeCast(v.init.?, v.init.?.typ.typ, .makeRuntime(declared));
                     }
 
                     break :declaredBlk .makeType(declared);
@@ -406,7 +411,7 @@ pub const TypeChecker = struct {
                     node.inner.varDecl.typ = self.makeNode(.typeType, .makeType(initType.?.success.typ));
                     break :declaredBlk .makeType(initType.?.success.typ);
                 };
-
+                
                 if(finalType.value.typ.data == .type) {
                     self.ctx.set(v.name, initType.?.success);
                 } else if(finalType.value.typ.isConstant()) {
@@ -414,15 +419,9 @@ pub const TypeChecker = struct {
                 } else {
                     self.ctx.set(v.name, .makeRuntime(.makeStorageType(.{.ptr = finalType.value.typ})));
                 }
-                // std.debug.print("{s} ", .{v.name});
-                // self.ctx.get(v.name).?.print();
-                // std.debug.print("{s} ", .{v.name});
-                // node.inner.varDecl.typ.?.typ.print();
-                // std.debug.print("\n", .{});
                 break :blk .makeNone();
             },
             .assign => |a| {
-                // a.target.print(0); std.debug.print(" {s}\n", .{@tagName(a.target.inner)});
                 const targetType = self.inferStorage(a.target);
                 if(targetType == .failure) return targetType;
 
@@ -513,6 +512,13 @@ pub const TypeChecker = struct {
                 break :blk .makeNone();
             },
             .@"if" => |i| {
+                var reachable: std.ArrayList(union(enum) {
+                    branch: usize,
+                    elseBranch: void,
+                }) = .empty;
+                defer reachable.deinit(std.heap.smp_allocator);
+
+                var foundConstantTrue: bool = false;
                 for(i.cond, i.thenBranch, 0..) |cond, then, j| {
                     const parent = self.ctx;
                     const child = Context.init(parent);
@@ -520,18 +526,65 @@ pub const TypeChecker = struct {
                     self.ctx = child;
                     defer self.ctx = parent;
 
-                    const condition = self.check(cond, .makeType(.bool));
-                    if(condition == .failure) return condition;
+                    const inferred = self.inferExpr(cond);
+                    if(inferred == .failure) return inferred;
 
-                    node.inner.@"if".cond[j] = self.makeCast(cond, cond.typ.typ, .makeRuntime(.makeType(.bool)));
+                    _ = self.unify(inferred.success.typ, .makeType(.bool)) orelse return .{
+                        .failure = .{
+                            .kind = .{ .typeMismatch = .{.expected = .makeType(.bool), .found = inferred.success.typ} },
+                            .span = cond.span
+                        }
+                    };
 
                     const body = self.inferStmt(then);
                     if(body == .failure) return body;
+
+                    if(inferred.success.typ.data == .const_bool) {
+                        if(inferred.success.value.constant.bool) {
+                            if(!foundConstantTrue)
+                                reachable.append(std.heap.smp_allocator, .{.branch = j}) catch unreachable;
+                            foundConstantTrue = true;
+                        }
+                    } else {
+                        if(!foundConstantTrue)
+                            reachable.append(std.heap.smp_allocator, .{.branch = j}) catch unreachable;
+                        node.inner.@"if".cond[j] = self.makeCast(cond, inferred.success.typ, .makeRuntime(.makeType(.bool)));
+                    }
                 }
                 if(i.elseBranch) |elseBranch| {
+                    if(!foundConstantTrue)
+                        reachable.append(std.heap.smp_allocator, .elseBranch) catch unreachable;
                     const body = self.inferStmt(elseBranch);
                     if(body == .failure) return body;
                 }
+
+                var new_conds: std.ArrayList(*Node) = .empty;
+                var new_then: std.ArrayList(*Node)  = .empty;
+                var new_else: ?*Node = null;
+
+                for (reachable.items) |r| {
+                    switch (r) {
+                        .branch => |j| {
+                            const cond = i.cond[j];
+
+                            if (cond.typ.typ.data == .const_bool and cond.typ.value.constant.bool) {
+                                new_else = i.thenBranch[j];
+                                break;
+                            }
+
+                            new_conds.append(std.heap.smp_allocator, cond) catch unreachable;
+                            new_then.append(std.heap.smp_allocator, i.thenBranch[j]) catch unreachable;
+                        },
+
+                        .elseBranch => {
+                            new_else = i.elseBranch.?;
+                        }
+                    }
+                }
+
+                node.inner.@"if".cond = new_conds.toOwnedSlice(std.heap.smp_allocator) catch unreachable;
+                node.inner.@"if".thenBranch = new_then.toOwnedSlice(std.heap.smp_allocator) catch unreachable;
+                node.inner.@"if".elseBranch = new_else;
 
                 break :blk .makeNone();
             },

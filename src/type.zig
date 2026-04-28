@@ -124,6 +124,8 @@ pub const Type = struct {
     }
 
     pub fn canCoerce(self: *Type, other: *Type) bool {
+        if(self.data == .const_bool and other.data == .bool) return true;
+        if(self.data == .bool and other.data == .bool) return true;
         if(self.isNumeric() and other.isNumeric()) return true;
         if(self.data == .null and other.isPointer()) return true;
         if(self.isPointer() and other.data == .null) return true;

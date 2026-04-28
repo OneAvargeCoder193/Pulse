@@ -294,7 +294,7 @@ pub const CodeGenerator = struct {
                 if(self.currentFunc == null) {
                     const variable = c.LLVMAddGlobal(self.module, varType.toLLVM(), cName);
                     c.LLVMSetLinkage(variable, c.LLVMExternalLinkage);
-                    c.LLVMSetGlobalConstant(variable, 0); // mutable (1 would make it constant)
+                    c.LLVMSetGlobalConstant(variable, 0);
                     c.LLVMSetInitializer(variable, c.LLVMConstNull(varType.toLLVM()));
                     if(v.init) |ini| {
                         c.LLVMSetInitializer(variable, self.visitValue(ini).value());
