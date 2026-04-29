@@ -65,7 +65,7 @@ pub const Type = struct {
 
     pub fn isConstant(self: *Type) bool {
         switch(self.data) {
-            .const_int, .const_float, .const_bool, .null => return true,
+            .const_int, .const_float, .const_bool, .null, .type => return true,
             else => return false,
         }
     }

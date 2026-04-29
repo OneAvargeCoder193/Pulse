@@ -558,16 +558,35 @@ pub const TypeChecker = struct {
                     if(body == .failure) return body;
                 }
 
+                if(reachable.items.len == 0) {
+                    break :blk .makeNone();
+                } else if(reachable.items.len == 1) {
+                    const idx = reachable.items[0];
+                    switch(idx) {
+                        .branch => |j| {
+                            const cond = i.cond[j];
+                            if (cond.typ.typ.data == .const_bool and cond.typ.value.constant.bool) {
+                                node.* = i.thenBranch[j].*;
+                                break :blk .makeNone();
+                            }
+                        },
+                        .elseBranch => {
+                            node.* = i.elseBranch.?.*;
+                            break :blk .makeNone();
+                        },
+                    }
+                }
+
                 var new_conds: std.ArrayList(*Node) = .empty;
                 var new_then: std.ArrayList(*Node)  = .empty;
                 var new_else: ?*Node = null;
 
-                for (reachable.items) |r| {
+                for (reachable.items, 0..) |r, idx| {
                     switch (r) {
                         .branch => |j| {
                             const cond = i.cond[j];
 
-                            if (cond.typ.typ.data == .const_bool and cond.typ.value.constant.bool) {
+                            if (cond.typ.typ.data == .const_bool and cond.typ.value.constant.bool and idx == reachable.items.len - 1) {
                                 new_else = i.thenBranch[j];
                                 break;
                             }

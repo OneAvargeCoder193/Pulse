@@ -105,6 +105,15 @@ func main() i32 {
     writeUint(stdout, add(69000, 420));
     writeChar(stdout, 10);
     writeInt(stdout, -420);
+    writeChar(stdout, 10);
+
+    if(windows) {
+        write(stdout, "OS is windows\n");
+    } else if(linux) {
+        write(stdout, "OS is linux\n");
+    } else {
+        write(stdout, "OS is unknown\n");
+    }
 
     return 0;
 }

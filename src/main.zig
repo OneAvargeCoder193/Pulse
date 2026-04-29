@@ -37,7 +37,20 @@ pub fn main(init: std.process.Init) u8 {
         return 1;
     }
 
+    const defaultTriple = c.LLVMGetDefaultTargetTriple();
+    defer c.LLVMDisposeMessage(defaultTriple);
+
+    const triple = arenaAllocator.dupeZ(u8, opts.target orelse std.mem.span(defaultTriple)) catch unreachable;
+
     var typeChecker = checker.TypeChecker.init(arenaAllocator);
+    
+    typeChecker.ctx.set("linux", .makeConstant(.makeType(.const_bool), .{
+        .bool = std.mem.count(u8, triple, "linux") != 0,
+    }));
+    typeChecker.ctx.set("windows", .makeConstant(.makeType(.const_bool), .{
+        .bool = std.mem.count(u8, triple, "windows") != 0,
+    }));
+    
     const checkerResult = typeChecker.infer(parseResult.success);
     if(checkerResult == .failure) {
         _ = checkerResult.failure.print(std.heap.smp_allocator, opts.inputs[0], contents);
@@ -48,16 +61,14 @@ pub fn main(init: std.process.Init) u8 {
     var codeGen = codegen.CodeGenerator.init(arenaAllocator);
     _ = codeGen.visit(parseResult.success);
 
+    _ = c.LLVMPrintModuleToFile(codeGen.module, "out.ll", null);
+
     var errorMessage: [*c]u8 = undefined;
     if(c.LLVMVerifyModule(codeGen.module, c.LLVMReturnStatusAction, &errorMessage) != 0) {
         std.debug.print("{s}\n", .{errorMessage});
         return 1;
     }
 
-    const defaultTriple = c.LLVMGetDefaultTargetTriple();
-    defer c.LLVMDisposeMessage(defaultTriple);
-
-    const triple = arenaAllocator.dupeZ(u8, opts.target orelse std.mem.span(defaultTriple)) catch unreachable;
     var target: c.LLVMTargetRef = undefined;
 
     if(c.LLVMGetTargetFromTriple(@ptrCast(triple), &target, &errorMessage) != 0) {
